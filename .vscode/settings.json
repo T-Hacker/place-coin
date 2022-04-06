@@ -1,0 +1,10 @@
+{
+    "editor.formatOnPaste": true,
+    "editor.formatOnSave": true,
+    "cSpell.words": [
+        "chrono",
+        "Hasher",
+        "keccak",
+        "nanos"
+    ]
+}
