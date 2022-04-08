@@ -8,7 +8,7 @@ pub const CURRENT_VERSION: u32 = 1;
 mod tests {
     use crate::{
         blockchain::{Blockchain, Hash},
-        transaction::{Credits, Transaction, TransactionInput, TransactionOutput},
+        transaction::{Credits, TransactionOutput},
     };
     use anyhow::Result;
     use rayon::iter::ParallelIterator;
@@ -30,23 +30,7 @@ mod tests {
         let mut blockchain = setup_blockchain()?;
 
         // Create a new transaction to transfer some credits.
-        let last_block = blockchain.get_last_block();
-        let last_transaction = last_block.get_transactions().first().unwrap();
-
-        let last_transaction_hash = last_transaction.get_hash();
-
-        let inputs = vec![TransactionInput::FromOutput {
-            hash: *last_transaction_hash,
-            index: 0,
-        }];
-
-        let outputs = vec![TransactionOutput::ToInput {
-            value: 99,
-            public_key_hash: OTHER_NODE_ID,
-        }];
-
-        let transaction = Transaction::try_new(&blockchain, inputs, outputs, 0)?;
-        blockchain.new_transaction(transaction)?;
+        blockchain.create_simple_transaction(&MY_NODE_ID, &OTHER_NODE_ID, 99, 5)?;
 
         // Mine to commit the new block.
         blockchain.mine()?;
@@ -57,7 +41,7 @@ mod tests {
 
         let total_unspent_credits = blockchain
             .get_all_unspent_outputs()
-            .map(|output| match output {
+            .map(|(_, output, _)| match output {
                 TransactionOutput::ToInput { value, .. } => *value,
                 TransactionOutput::ToPixel { .. } => 0,
             })

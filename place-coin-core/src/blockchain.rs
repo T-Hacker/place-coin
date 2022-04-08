@@ -2,7 +2,7 @@ use crate::{
     block::Block,
     transaction::{Credits, Transaction, TransactionInput, TransactionOutput},
 };
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use tiny_keccak::{Hasher, Sha3};
@@ -116,7 +116,9 @@ impl Blockchain {
         self.blocks.get(&self.last_block_hash).unwrap()
     }
 
-    pub fn get_all_unspent_outputs(&self) -> impl ParallelIterator<Item = &TransactionOutput> + '_ {
+    pub fn get_all_unspent_outputs(
+        &self,
+    ) -> impl ParallelIterator<Item = (&Transaction, &TransactionOutput, usize)> + '_ {
         self.blocks
             .par_iter()
             .flat_map(|(_, block)| block.get_transactions())
@@ -124,22 +126,16 @@ impl Blockchain {
                 std::iter::repeat(transaction).zip(transaction.get_outputs().iter().enumerate())
             })
             .flatten_iter()
-            .filter_map(|(transaction, (output_index, output))| {
-                let transaction_hash = transaction.get_hash();
-
-                match output {
-                    TransactionOutput::ToInput { .. } => {
-                        if self.is_output_spent(transaction_hash, output_index as u32) {
-                            None
-                        } else {
-                            dbg!(transaction);
-
-                            Some(output)
-                        }
+            .filter_map(|(transaction, (output_index, output))| match output {
+                TransactionOutput::ToInput { .. } => {
+                    if self.is_output_spent(transaction.get_hash(), output_index as u32) {
+                        None
+                    } else {
+                        Some((transaction, output, output_index))
                     }
-
-                    TransactionOutput::ToPixel { .. } => None,
                 }
+
+                TransactionOutput::ToPixel { .. } => None,
             })
     }
 
@@ -152,6 +148,86 @@ impl Blockchain {
 
                 this_transaction_hash == transaction_hash
             })
+    }
+
+    pub fn create_simple_transaction(
+        &mut self,
+        sender: &Hash,
+        recipient: &Hash,
+        value: Credits,
+        tax: Credits,
+    ) -> Result<()> {
+        debug_assert!(value > 0);
+        debug_assert!(tax >= 0);
+
+        // Collect unspent transactions to create the amount of credits needed.
+        let unspent_outputs = self
+            .get_all_unspent_outputs()
+            .filter_map(|(transaction, output, output_index)| match output {
+                TransactionOutput::ToInput {
+                    value,
+                    public_key_hash,
+                } => {
+                    if public_key_hash == sender {
+                        Some((transaction, output_index, *value))
+                    } else {
+                        None
+                    }
+                }
+                TransactionOutput::ToPixel { .. } => None,
+            })
+            .collect::<Vec<_>>();
+
+        let (transactions, total) = {
+            let mut unspent_outputs = unspent_outputs.iter();
+
+            let total_target_value = value + tax;
+            let mut total = 0;
+            let mut outputs = vec![];
+            while total < total_target_value {
+                if let Some((transaction, output_index, value)) = unspent_outputs.next() {
+                    total += value;
+                    outputs.push((transaction.get_hash(), output_index));
+                } else {
+                    break;
+                }
+            }
+
+            (outputs, total)
+        };
+
+        if total < value + tax {
+            bail!("Not enough credits to make the transaction.")
+        }
+
+        // Create transaction that uses all the unpent transaction outputs necessary.
+        let inputs = transactions
+            .into_iter()
+            .map(
+                |(transaction_hash, output_index)| TransactionInput::FromOutput {
+                    hash: *transaction_hash,
+                    index: *output_index as u32,
+                },
+            )
+            .collect();
+
+        let value_output = TransactionOutput::ToInput {
+            value,
+            public_key_hash: *recipient,
+        };
+
+        let change_value = total - value - tax;
+        let change_output = TransactionOutput::ToInput {
+            value: change_value,
+            public_key_hash: *sender,
+        };
+
+        let outputs = vec![value_output, change_output];
+
+        let transaction = Transaction::try_new(self, inputs, outputs, 0)?;
+        self.new_transaction(transaction)?;
+
+        Ok(())
     }
 
     fn proof_of_work(&self) -> Proof {
