@@ -1,28 +1,25 @@
 use crate::{
     blockchain::{Hash, Proof},
-    transaction::Transaction,
+    transaction::{Transaction, TransactionInput},
 };
-use chrono::{DateTime, Utc};
+use anyhow::{bail, Context, Result};
+use chrono::{serde::ts_nanoseconds, DateTime, Utc};
+use serde::Serialize;
 use tiny_keccak::{Hasher, Sha3};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Block {
-    index: u64,
+    #[serde(with = "ts_nanoseconds")]
     timestamp: DateTime<Utc>,
+
     transactions: Vec<Transaction>,
     proof: Proof,
     previous_hash: Option<Hash>,
 }
 
 impl Block {
-    pub fn new(
-        index: u64,
-        transactions: Vec<Transaction>,
-        proof: Proof,
-        previous_hash: Option<Hash>,
-    ) -> Self {
+    pub fn new(transactions: Vec<Transaction>, proof: Proof, previous_hash: Option<Hash>) -> Self {
         Self {
-            index,
             timestamp: Utc::now(),
             transactions,
             proof,
@@ -30,8 +27,27 @@ impl Block {
         }
     }
 
-    pub fn get_index(&self) -> u64 {
-        self.index
+    pub fn get_block_height(&self) -> Result<u64> {
+        // The last transaction in a block must be the reward transactions. This has the block height.
+        if let Some(last_transaction) = self.transactions.last() {
+            let input = last_transaction
+                .get_inputs()
+                .first()
+                .context("At least one input must exist.")?;
+
+            if let TransactionInput::FromReward { height, .. } = input {
+                Ok(*height)
+            } else {
+                bail!("No reward transaction found.")
+            }
+        } else {
+            // This block doesn't have transactions. Lets check if its the genesis block.
+            if self.previous_hash.is_none() {
+                Ok(0)
+            } else {
+                bail!("Block height can't be found.")
+            }
+        }
     }
 
     pub fn get_transactions(&self) -> &Vec<Transaction> {
@@ -43,50 +59,13 @@ impl Block {
     }
 
     pub fn calculate_hash(&self) -> Hash {
-        let mut sha3 = Sha3::v256();
+        let encoded = bincode::serialize(self).unwrap();
 
-        sha3.update(&self.index.to_le_bytes());
-        sha3.update(&self.timestamp.timestamp_nanos().to_le_bytes());
-
-        for t in &self.transactions {
-            match t {
-                Transaction::Peer {
-                    sender,
-                    recipient,
-                    amount,
-                } => {
-                    sha3.update(&sender.to_le_bytes());
-                    sha3.update(&recipient.to_le_bytes());
-                    sha3.update(&amount.to_le_bytes());
-                }
-
-                Transaction::Pixel {
-                    sender,
-                    position: coordinate,
-                    color,
-                } => {
-                    sha3.update(&sender.to_le_bytes());
-
-                    let (x, y) = coordinate;
-                    sha3.update(&x.to_le_bytes());
-                    sha3.update(&y.to_le_bytes());
-
-                    let (r, g, b) = color;
-                    sha3.update(&r.to_le_bytes());
-                    sha3.update(&g.to_le_bytes());
-                    sha3.update(&b.to_le_bytes());
-                }
-            }
-        }
-
-        sha3.update(&self.proof.to_le_bytes());
-
-        if let Some(previous_hash) = &self.previous_hash {
-            sha3.update(previous_hash);
-        }
+        let mut hasher = Sha3::v256();
+        hasher.update(&encoded);
 
         let mut hash: Hash = Default::default();
-        sha3.finalize(&mut hash);
+        hasher.finalize(&mut hash);
 
         hash
     }

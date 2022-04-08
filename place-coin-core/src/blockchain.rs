@@ -1,79 +1,160 @@
 use crate::{
     block::Block,
-    transaction::{Address, Credits, Point, Transaction},
+    transaction::{Credits, Transaction, TransactionInput, TransactionOutput},
 };
-use anyhow::{bail, Result};
+use anyhow::Result;
 use rayon::prelude::*;
+use std::collections::HashMap;
 use tiny_keccak::{Hasher, Sha3};
 
 pub type Proof = u128;
 pub type Hash = [u8; 32];
 
+const BLOCK_LOCK_TIME: u32 = 0; // Minimum block height that must exist before the reward can be cashed out.
+
 #[derive(Debug)]
 pub struct Blockchain {
-    chain: Vec<Block>,
+    miner_public_key_hash: Hash,
+    blocks: HashMap<Hash, Block>,
     transactions: Vec<Transaction>,
-}
-
-impl Default for Blockchain {
-    fn default() -> Self {
-        let genesis_block = Block::new(0, Default::default(), 100, Default::default());
-
-        Self {
-            chain: vec![genesis_block],
-            transactions: Default::default(),
-        }
-    }
+    last_block_hash: Hash,
 }
 
 impl Blockchain {
-    pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        // Check if sender has the credits to do the transaction.
-        match &transaction {
-            Transaction::Peer { sender, amount, .. } => {
-                let credits = &self.get_peer_credits(sender, None);
-                if *sender != 0 && amount > credits {
-                    bail!("Sender does not have the credits to do the transaction. Credits: {credits}, Amount: {amount}")
-                }
-            }
+    pub fn new(miner_public_key_hash: Hash) -> Self {
+        let genesis_block = Block::new(Default::default(), 100, Default::default());
+        let genesis_block_hash = genesis_block.calculate_hash();
 
-            Transaction::Pixel {
-                sender, position, ..
-            } => {
-                let credits = self.get_peer_credits(sender, None);
-                let cost = self.get_pixel_cost(sender, position, None);
-                if cost > credits {
-                    bail!("Buyer doesn't have enough credits to paint pixel. Credits: {credits}, Cost: {cost}")
-                }
-            }
+        let mut blocks = HashMap::new();
+        blocks.insert(genesis_block_hash, genesis_block);
+
+        Self {
+            miner_public_key_hash,
+            blocks,
+            transactions: Default::default(),
+            last_block_hash: genesis_block_hash,
         }
+    }
 
+    pub fn new_transaction(&mut self, transaction: Transaction) -> Result<()> {
+        // Add the transaction to be later added to the next block.
         self.transactions.push(transaction);
 
         Ok(())
     }
 
-    pub fn new_block(&mut self, proof: Proof, previous_hash: Hash) -> usize {
+    pub fn mine(&mut self) -> Result<()> {
         let mut transactions = Default::default();
         std::mem::swap(&mut self.transactions, &mut transactions);
 
-        let block = Block::new(
-            self.chain.len() as u64,
-            transactions,
-            proof,
-            Some(previous_hash),
-        );
+        // Calculate block reward.
+        let total_unspent_outputs: Credits = transactions
+            .iter()
+            .map(|transaction| transaction.get_balance())
+            .sum();
 
-        self.chain.push(block);
+        let block_reward = 1000 + total_unspent_outputs;
 
-        self.chain.len() - 1
+        // Add reward transaction.
+        let last_block = self.get_last_block();
+        let inputs = vec![TransactionInput::FromReward {
+            height: last_block.get_block_height()? + 1,
+            value: block_reward,
+        }];
+
+        let outputs = vec![TransactionOutput::ToInput {
+            value: block_reward,
+            public_key_hash: self.miner_public_key_hash,
+        }];
+
+        let reward_transaction = Transaction::try_new(self, inputs, outputs, BLOCK_LOCK_TIME)?;
+        transactions.push(reward_transaction);
+
+        // Create proof of work.
+        let proof = self.proof_of_work();
+
+        // Create the new block.
+        let new_block = Block::new(transactions, proof, Some(self.last_block_hash));
+        let new_block_hash = new_block.calculate_hash();
+
+        self.blocks.insert(new_block_hash, new_block);
+        self.last_block_hash = new_block_hash;
+
+        Ok(())
+    }
+
+    pub fn get_peer_credits(&self, peer_address: &Hash) -> Credits {
+        self.blocks
+            .par_iter()
+            .flat_map(|(_, block)| block.get_transactions())
+            .map(|transaction| {
+                std::iter::repeat(transaction).zip(transaction.get_outputs().iter().enumerate())
+            })
+            .flatten_iter()
+            .filter_map(|(transaction, (output_index, output))| match output {
+                TransactionOutput::ToInput {
+                    value,
+                    public_key_hash,
+                } => {
+                    let transaction_hash = transaction.get_hash();
+
+                    if public_key_hash != peer_address
+                        || self.is_output_spent(transaction_hash, output_index as u32)
+                    {
+                        None
+                    } else {
+                        Some(value)
+                    }
+                }
+
+                TransactionOutput::ToPixel { .. } => None,
+            })
+            .sum()
     }
 
     pub fn get_last_block(&self) -> &Block {
-        self.chain.last().unwrap()
+        self.blocks.get(&self.last_block_hash).unwrap()
     }
 
-    pub fn proof_of_work(&self) -> Proof {
+    pub fn get_all_unspent_outputs(&self) -> impl ParallelIterator<Item = &TransactionOutput> + '_ {
+        self.blocks
+            .par_iter()
+            .flat_map(|(_, block)| block.get_transactions())
+            .map(|transaction| {
+                std::iter::repeat(transaction).zip(transaction.get_outputs().iter().enumerate())
+            })
+            .flatten_iter()
+            .filter_map(|(transaction, (output_index, output))| {
+                let transaction_hash = transaction.get_hash();
+
+                match output {
+                    TransactionOutput::ToInput { .. } => {
+                        if self.is_output_spent(transaction_hash, output_index as u32) {
+                            None
+                        } else {
+                            dbg!(transaction);
+
+                            Some(output)
+                        }
+                    }
+
+                    TransactionOutput::ToPixel { .. } => None,
+                }
+            })
+    }
+
+    pub fn find_transaction(&self, transaction_hash: &Hash) -> Option<&Transaction> {
+        self.blocks
+            .par_iter()
+            .flat_map(|(_, block)| block.get_transactions())
+            .find_any(|transaction| {
+                let this_transaction_hash = transaction.get_hash();
+
+                this_transaction_hash == transaction_hash
+            })
+    }
+
+    fn proof_of_work(&self) -> Proof {
         let last_block = self.get_last_block();
         let last_proof = last_block.get_proof();
 
@@ -81,99 +162,6 @@ impl Blockchain {
             .into_par_iter()
             .find_any(|possible_proof| Self::validate_proof(last_proof, possible_proof))
             .unwrap()
-    }
-
-    pub fn get_peer_credits(&self, peer_address: &Address, block_index: Option<u64>) -> Credits {
-        let block_index = block_index.unwrap_or_else(|| self.get_last_block().get_index()) + 1;
-
-        self.chain
-            .par_iter()
-            .take(block_index as usize)
-            .flat_map(|block| block.get_transactions())
-            .filter_map(|transaction| match transaction {
-                Transaction::Peer {
-                    sender,
-                    recipient,
-                    amount,
-                } => {
-                    if sender == peer_address {
-                        Some(-amount)
-                    } else if recipient == peer_address {
-                        Some(*amount)
-                    } else {
-                        None
-                    }
-                }
-
-                Transaction::Pixel {
-                    sender, position, ..
-                } => {
-                    if sender == peer_address {
-                        let pixel_cost =
-                            self.get_pixel_cost(peer_address, position, Some(block_index));
-
-                        Some(-pixel_cost)
-                    } else {
-                        None
-                    }
-                }
-            })
-            .sum::<Credits>()
-    }
-
-    pub fn get_pixel_cost(
-        &self,
-        peer_id: &Address,
-        position: &Point,
-        block_index: Option<u64>,
-    ) -> Credits {
-        // Calculate base pixel cost.
-        let base_cost = {
-            let (x, y) = position;
-            let (x, y) = (f64::from(*x), f64::from(*y));
-            let radius = (x.powi(2) + y.powi(2)).sqrt(); // Distance to center of canvas.
-            let radius = radius * 0.01; // Scale back radius to make the highest cost 1% of total possible currency available.
-
-            1 + (radius * ((i32::MAX - 1) as f64)) as Credits
-        };
-
-        // Find previous owners of the pixel.
-        let peers = self
-            .get_pixel_owners(position, block_index)
-            .filter(|id| *id != peer_id);
-
-        // Add share price of the pixel for each previous owners.
-        let peer_count = peers.count();
-
-        // Calculate final price of the pixel.
-        base_cost + base_cost * peer_count as i64
-    }
-
-    fn get_pixel_owners<'a>(
-        &'a self,
-        position: &'a Point,
-        block_index: Option<u64>,
-    ) -> impl ParallelIterator<Item = &Address> + 'a {
-        let block_index = block_index.unwrap_or_else(|| self.get_last_block().get_index()) + 1;
-
-        self.chain
-            .par_iter()
-            .take(block_index as usize)
-            .flat_map(|block| block.get_transactions())
-            .filter_map(move |transaction| match transaction {
-                Transaction::Peer { .. } => None,
-                Transaction::Pixel {
-                    sender,
-                    position: pixel_pos,
-                    ..
-                } => {
-                    if pixel_pos == position {
-                        Some(sender)
-                    } else {
-                        None
-                    }
-                }
-            })
     }
 
     fn validate_proof(last_proof: &Proof, proof: &Proof) -> bool {
@@ -185,5 +173,19 @@ impl Blockchain {
         sha3.finalize(&mut hash);
 
         hash.iter().take(1).all(|e| *e == 0)
+    }
+
+    fn is_output_spent(&self, transaction_hash: &Hash, output_index: u32) -> bool {
+        self.blocks
+            .par_iter()
+            .flat_map(|(_, block)| block.get_transactions())
+            .flat_map(|transaction| transaction.get_inputs())
+            .any(|input| match input {
+                TransactionInput::FromOutput { hash, index } => {
+                    *index == output_index && hash == transaction_hash
+                }
+
+                TransactionInput::FromReward { .. } => false, // Because miners automatically cache in rewards.
+            })
     }
 }
