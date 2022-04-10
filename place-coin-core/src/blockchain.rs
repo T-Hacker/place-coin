@@ -4,8 +4,8 @@ use crate::{
 };
 use anyhow::{bail, Result};
 use rayon::prelude::*;
+use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
-use tiny_keccak::{Hasher, Sha3};
 
 pub type Proof = u128;
 pub type Hash = [u8; 32];
@@ -241,12 +241,12 @@ impl Blockchain {
     }
 
     fn validate_proof(last_proof: &Proof, proof: &Proof) -> bool {
-        let mut sha3 = Sha3::v256();
-        sha3.update(&last_proof.to_le_bytes());
-        sha3.update(&proof.to_le_bytes());
+        let mut hasher = Sha3_256::default();
+        hasher.update(&last_proof.to_le_bytes());
+        hasher.update(&proof.to_le_bytes());
 
-        let mut hash: Hash = Default::default();
-        sha3.finalize(&mut hash);
+        let digest = hasher.finalize();
+        let hash: Hash = digest.as_slice().try_into().unwrap();
 
         hash.iter().take(1).all(|e| *e == 0)
     }

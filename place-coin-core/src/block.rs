@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use chrono::{serde::ts_nanoseconds, DateTime, Utc};
 use serde::Serialize;
-use tiny_keccak::{Hasher, Sha3};
+use sha3::{Digest, Sha3_256};
 
 #[derive(Debug, Serialize)]
 pub struct Block {
@@ -61,11 +61,11 @@ impl Block {
     pub fn calculate_hash(&self) -> Hash {
         let encoded = bincode::serialize(self).unwrap();
 
-        let mut hasher = Sha3::v256();
+        let mut hasher = Sha3_256::default();
         hasher.update(&encoded);
 
-        let mut hash: Hash = Default::default();
-        hasher.finalize(&mut hash);
+        let digest = hasher.finalize();
+        let hash: Hash = digest.as_slice().try_into().unwrap();
 
         hash
     }

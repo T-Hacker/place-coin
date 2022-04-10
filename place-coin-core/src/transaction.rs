@@ -1,7 +1,7 @@
 use crate::blockchain::{Blockchain, Hash};
 use anyhow::{bail, Context, Result};
 use serde::{ser::SerializeSeq, Serialize};
-use tiny_keccak::{Hasher, Sha3};
+use sha3::{Digest, Sha3_256};
 
 pub type Version = u32;
 pub type Point = (i32, i32);
@@ -104,11 +104,11 @@ impl Transaction {
         // Calculate hash.
         let encoded = bincode::serialize(&data).unwrap();
 
-        let mut hasher = Sha3::v256();
+        let mut hasher = Sha3_256::default();
         hasher.update(&encoded);
 
-        let mut hash: Hash = Default::default();
-        hasher.finalize(&mut hash);
+        let digest = hasher.finalize();
+        let hash: Hash = digest.as_slice().try_into().unwrap();
 
         // Return final type.
         Ok(Self {
