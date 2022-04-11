@@ -12,8 +12,17 @@ const CURRENT_TRANSACTION_VERSION: u32 = 0;
 
 #[derive(Debug, Serialize)]
 pub enum TransactionInput {
-    FromOutput { hash: Hash, index: u32 },
-    FromReward { height: u64, value: Credits },
+    FromOutput {
+        hash: Hash,
+        index: u32,
+        public_key: Hash,
+        signature: Hash,
+    },
+
+    FromReward {
+        height: u64,
+        value: Credits,
+    },
 }
 
 #[derive(Debug, Serialize)]

@@ -152,8 +152,8 @@ impl Blockchain {
 
     pub fn create_simple_transaction(
         &mut self,
-        sender: &Hash,
-        recipient: &Hash,
+        sender_public_key_hash: &Hash,
+        recipient_public_key_hash: &Hash,
         value: Credits,
         tax: Credits,
     ) -> Result<()> {
@@ -168,7 +168,7 @@ impl Blockchain {
                     value,
                     public_key_hash,
                 } => {
-                    if public_key_hash == sender {
+                    if public_key_hash == sender_public_key_hash {
                         Some((transaction, output_index, *value))
                     } else {
                         None
@@ -219,7 +219,7 @@ impl Blockchain {
         let change_value = total - value - tax;
         let change_output = TransactionOutput::ToInput {
             value: change_value,
-            public_key_hash: *sender,
+            public_key_hash: *sender_public_key_hash,
         };
 
         let outputs = vec![value_output, change_output];
