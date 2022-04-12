@@ -1,6 +1,7 @@
 use crate::{
     address::{Address, PublicKey},
     blockchain::{Blockchain, Hash},
+    color::Color,
     signature::Signature,
 };
 use anyhow::{bail, Context, Result};
@@ -9,7 +10,6 @@ use sha3::{Digest, Sha3_256};
 
 pub type Version = u32;
 pub type Point = (i32, i32);
-pub type Color = (u8, u8, u8);
 pub type Credits = i64;
 
 const CURRENT_TRANSACTION_VERSION: u32 = 0;
