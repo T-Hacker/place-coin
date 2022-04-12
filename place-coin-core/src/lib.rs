@@ -1,6 +1,7 @@
 pub mod address;
 pub mod block;
 pub mod blockchain;
+pub mod signature;
 pub mod transaction;
 
 pub const CURRENT_VERSION: u32 = 1;
@@ -10,7 +11,8 @@ mod tests {
     use crate::{
         address::Address,
         blockchain::{Blockchain, Hash},
-        transaction::{Credits, Signature, TransactionOutput},
+        signature::Signature,
+        transaction::{Credits, TransactionOutput},
     };
     use anyhow::Result;
     use rand_core::OsRng;

@@ -1,9 +1,9 @@
 use crate::{
-    address::{Address, PrivateKey, PublicKey},
+    address::{Address, PublicKey},
     blockchain::{Blockchain, Hash},
+    signature::Signature,
 };
 use anyhow::{bail, Context, Result};
-use ecdsa::signature::Signer;
 use serde::{ser::SerializeSeq, Serialize};
 use sha3::{Digest, Sha3_256};
 
@@ -170,27 +170,5 @@ impl Serialize for Transaction {
         seq.serialize_element(&self.data)?;
 
         seq.end()
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct Signature([u8; 64]);
-
-impl Signature {
-    pub fn new(private_key: &PrivateKey, hash: &Hash) -> Self {
-        let signature_key = k256::ecdsa::SigningKey::from_bytes(private_key).unwrap();
-        let signature: k256::ecdsa::Signature = signature_key.sign(hash);
-        let signature = signature.to_vec();
-
-        Self(signature.as_slice().try_into().unwrap())
-    }
-}
-
-impl Serialize for Signature {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_bytes(&self.0)
     }
 }

@@ -1,7 +1,8 @@
 use crate::{
     address::{Address, PrivateKey, PublicKey},
     block::Block,
-    transaction::{Credits, Signature, Transaction, TransactionInput, TransactionOutput},
+    signature::sign_transaction,
+    transaction::{Credits, Transaction, TransactionInput, TransactionOutput},
 };
 use anyhow::{bail, Result};
 use rayon::prelude::*;
@@ -211,7 +212,7 @@ impl Blockchain {
                     transaction_hash: *transaction_hash,
                     output_index: *output_index as u32,
                     public_key: *sender_public_key,
-                    signature: Self::sign_transaction(
+                    signature: sign_transaction(
                         transaction_hash,
                         *output_index as u32,
                         sender_public_key,
@@ -275,21 +276,5 @@ impl Blockchain {
 
                 TransactionInput::FromReward { .. } => false, // Because miners automatically cache in rewards.
             })
-    }
-
-    fn sign_transaction(
-        transaction_hash: &Hash,
-        output_index: u32,
-        public_key: &PublicKey,
-        private_key: &PrivateKey,
-    ) -> Signature {
-        let mut hasher = Sha3_256::default();
-        hasher.update(transaction_hash);
-        hasher.update(output_index.to_le_bytes());
-        hasher.update(public_key);
-
-        let hash: Hash = hasher.finalize().as_slice().try_into().unwrap();
-
-        Signature::new(private_key, &hash)
     }
 }
