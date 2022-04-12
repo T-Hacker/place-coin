@@ -8,6 +8,7 @@ pub const CURRENT_VERSION: u32 = 1;
 #[cfg(test)]
 mod tests {
     use crate::{
+        address::Address,
         blockchain::{Blockchain, Hash},
         transaction::{Credits, TransactionOutput},
     };
@@ -18,7 +19,8 @@ mod tests {
     const OTHER_NODE_ID: Hash = [8; 32];
 
     fn setup_blockchain() -> Result<Blockchain> {
-        let mut blockchain = Blockchain::new(MY_NODE_ID);
+        let miner_address = Address::from_private_key(&MY_NODE_ID);
+        let mut blockchain = Blockchain::new(miner_address);
 
         // Mine a block.
         blockchain.mine()?;
@@ -31,13 +33,23 @@ mod tests {
         let mut blockchain = setup_blockchain()?;
 
         // Create a new transaction to transfer some credits.
-        blockchain.create_simple_transaction(&MY_NODE_ID, &OTHER_NODE_ID, 99, 5)?;
+        let sender_address = Address::from_private_key(&MY_NODE_ID);
+        let recipient_address = Address::from_private_key(&OTHER_NODE_ID);
+
+        blockchain.create_simple_transaction(
+            &MY_NODE_ID,
+            &sender_address,
+            &recipient_address,
+            &OTHER_NODE_ID,
+            99,
+            5,
+        )?;
 
         // Mine to commit the new block.
         blockchain.mine()?;
 
         // Check if credits were transferred.
-        let credits = blockchain.get_peer_credits(&OTHER_NODE_ID);
+        let credits = blockchain.get_peer_credits(&recipient_address);
         assert_eq!(credits, 99, "Peer did not receive the credits.");
 
         let total_unspent_credits = blockchain

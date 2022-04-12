@@ -1,8 +1,11 @@
 use crate::{
+    address::{Address, PrivateKey, PublicKey},
     block::Block,
     transaction::{Credits, Transaction, TransactionInput, TransactionOutput},
 };
 use anyhow::{bail, Result};
+use ecdsa::signature::Signer;
+use k256::ecdsa::{Signature, SigningKey};
 use rayon::prelude::*;
 use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
@@ -14,14 +17,14 @@ const BLOCK_LOCK_TIME: u32 = 0; // Minimum block height that must exist before t
 
 #[derive(Debug)]
 pub struct Blockchain {
-    miner_public_key_hash: Hash,
+    miner_public_key_address: Address,
     blocks: HashMap<Hash, Block>,
     transactions: Vec<Transaction>,
     last_block_hash: Hash,
 }
 
 impl Blockchain {
-    pub fn new(miner_public_key_hash: Hash) -> Self {
+    pub fn new(miner_public_key_address: Address) -> Self {
         let genesis_block = Block::new(Default::default(), 100, Default::default());
         let genesis_block_hash = genesis_block.calculate_hash();
 
@@ -29,7 +32,7 @@ impl Blockchain {
         blocks.insert(genesis_block_hash, genesis_block);
 
         Self {
-            miner_public_key_hash,
+            miner_public_key_address,
             blocks,
             transactions: Default::default(),
             last_block_hash: genesis_block_hash,
@@ -64,7 +67,7 @@ impl Blockchain {
 
         let outputs = vec![TransactionOutput::ToInput {
             value: block_reward,
-            public_key_hash: self.miner_public_key_hash,
+            public_key_address: self.miner_public_key_address.clone(),
         }];
 
         let reward_transaction = Transaction::try_new(self, inputs, outputs, BLOCK_LOCK_TIME)?;
@@ -83,7 +86,7 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn get_peer_credits(&self, peer_address: &Hash) -> Credits {
+    pub fn get_peer_credits(&self, peer_address: &Address) -> Credits {
         self.blocks
             .par_iter()
             .flat_map(|(_, block)| block.get_transactions())
@@ -94,7 +97,7 @@ impl Blockchain {
             .filter_map(|(transaction, (output_index, output))| match output {
                 TransactionOutput::ToInput {
                     value,
-                    public_key_hash,
+                    public_key_address: public_key_hash,
                 } => {
                     let transaction_hash = transaction.get_hash();
 
@@ -152,8 +155,10 @@ impl Blockchain {
 
     pub fn create_simple_transaction(
         &mut self,
-        sender_public_key_hash: &Hash,
-        recipient_public_key_hash: &Hash,
+        sender_public_key: &PublicKey,
+        sender_public_key_address: &Address,
+        recipient_public_key_address: &Address,
+        recipient_private_key: &PrivateKey,
         value: Credits,
         tax: Credits,
     ) -> Result<()> {
@@ -166,9 +171,9 @@ impl Blockchain {
             .filter_map(|(transaction, output, output_index)| match output {
                 TransactionOutput::ToInput {
                     value,
-                    public_key_hash,
+                    public_key_address,
                 } => {
-                    if public_key_hash == sender_public_key_hash {
+                    if public_key_address == sender_public_key_address {
                         Some((transaction, output_index, *value))
                     } else {
                         None
@@ -205,21 +210,28 @@ impl Blockchain {
             .into_iter()
             .map(
                 |(transaction_hash, output_index)| TransactionInput::FromOutput {
-                    hash: *transaction_hash,
-                    index: *output_index as u32,
+                    transaction_hash: *transaction_hash,
+                    output_index: *output_index as u32,
+                    public_key: *sender_public_key,
+                    signature: Self::sign_transaction(
+                        transaction_hash,
+                        *output_index as u32,
+                        sender_public_key,
+                        recipient_private_key,
+                    ),
                 },
             )
             .collect();
 
         let value_output = TransactionOutput::ToInput {
             value,
-            public_key_hash: *recipient,
+            public_key_address: recipient_public_key_address.clone(),
         };
 
         let change_value = total - value - tax;
         let change_output = TransactionOutput::ToInput {
             value: change_value,
-            public_key_hash: *sender_public_key_hash,
+            public_key_address: sender_public_key_address.clone(),
         };
 
         let outputs = vec![value_output, change_output];
@@ -257,11 +269,34 @@ impl Blockchain {
             .flat_map(|(_, block)| block.get_transactions())
             .flat_map(|transaction| transaction.get_inputs())
             .any(|input| match input {
-                TransactionInput::FromOutput { hash, index } => {
-                    *index == output_index && hash == transaction_hash
-                }
+                TransactionInput::FromOutput {
+                    transaction_hash: hash,
+                    output_index: index,
+                    ..
+                } => *index == output_index && hash == transaction_hash,
 
                 TransactionInput::FromReward { .. } => false, // Because miners automatically cache in rewards.
             })
+    }
+
+    fn sign_transaction(
+        transaction_hash: &Hash,
+        output_index: u32,
+        public_key: &PublicKey,
+        private_key: &PrivateKey,
+    ) -> Hash {
+        let mut hasher = Sha3_256::default();
+        hasher.update(transaction_hash);
+        hasher.update(output_index.to_le_bytes());
+        hasher.update(public_key);
+
+        let hash: Hash = hasher.finalize().as_slice().try_into().unwrap();
+
+        let signature_key = SigningKey::from_bytes(private_key).unwrap();
+        let signature: Signature = signature_key.sign(&hash);
+
+        dbg!(signature.to_vec().len());
+
+        signature.to_vec().as_slice().try_into().unwrap()
     }
 }

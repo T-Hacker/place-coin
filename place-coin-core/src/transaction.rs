@@ -1,4 +1,7 @@
-use crate::blockchain::{Blockchain, Hash};
+use crate::{
+    address::{Address, PublicKey},
+    blockchain::{Blockchain, Hash},
+};
 use anyhow::{bail, Context, Result};
 use serde::{ser::SerializeSeq, Serialize};
 use sha3::{Digest, Sha3_256};
@@ -13,9 +16,9 @@ const CURRENT_TRANSACTION_VERSION: u32 = 0;
 #[derive(Debug, Serialize)]
 pub enum TransactionInput {
     FromOutput {
-        hash: Hash,
-        index: u32,
-        public_key: Hash,
+        transaction_hash: Hash,
+        output_index: u32,
+        public_key: PublicKey,
         signature: Hash,
     },
 
@@ -29,7 +32,7 @@ pub enum TransactionInput {
 pub enum TransactionOutput {
     ToInput {
         value: Credits,
-        public_key_hash: Hash,
+        public_key_address: Address,
     },
 
     ToPixel {
@@ -65,7 +68,11 @@ impl Transaction {
         let input_value: Credits = inputs
             .iter()
             .map(|input| match input {
-                TransactionInput::FromOutput { hash, index } => {
+                TransactionInput::FromOutput {
+                    transaction_hash: hash,
+                    output_index: index,
+                    ..
+                } => {
                     let input_transaction = blockchain
                         .find_transaction(hash)
                         .context("Fail to find input transaction.")?;
