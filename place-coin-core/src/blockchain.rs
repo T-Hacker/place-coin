@@ -1,11 +1,9 @@
 use crate::{
     address::{Address, PrivateKey, PublicKey},
     block::Block,
-    transaction::{Credits, Transaction, TransactionInput, TransactionOutput},
+    transaction::{Credits, Signature, Transaction, TransactionInput, TransactionOutput},
 };
 use anyhow::{bail, Result};
-use ecdsa::signature::Signer;
-use k256::ecdsa::{Signature, SigningKey};
 use rayon::prelude::*;
 use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
@@ -284,7 +282,7 @@ impl Blockchain {
         output_index: u32,
         public_key: &PublicKey,
         private_key: &PrivateKey,
-    ) -> Hash {
+    ) -> Signature {
         let mut hasher = Sha3_256::default();
         hasher.update(transaction_hash);
         hasher.update(output_index.to_le_bytes());
@@ -292,11 +290,6 @@ impl Blockchain {
 
         let hash: Hash = hasher.finalize().as_slice().try_into().unwrap();
 
-        let signature_key = SigningKey::from_bytes(private_key).unwrap();
-        let signature: Signature = signature_key.sign(&hash);
-
-        dbg!(signature.to_vec().len());
-
-        signature.to_vec().as_slice().try_into().unwrap()
+        Signature::new(private_key, &hash)
     }
 }

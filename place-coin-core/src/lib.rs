@@ -10,9 +10,10 @@ mod tests {
     use crate::{
         address::Address,
         blockchain::{Blockchain, Hash},
-        transaction::{Credits, TransactionOutput},
+        transaction::{Credits, Signature, TransactionOutput},
     };
     use anyhow::Result;
+    use rand_core::OsRng;
     use rayon::iter::ParallelIterator;
 
     const MY_NODE_ID: Hash = [1; 32];
@@ -96,4 +97,23 @@ mod tests {
 
     //     Ok(())
     // }
+
+    #[test]
+    fn test_signature_with_different_private_keys() -> Result<()> {
+        let hash: Hash = [0xFF; 32];
+
+        let private_key_1 = k256::SecretKey::random(&mut OsRng);
+        let private_key_1 = private_key_1.to_be_bytes();
+        let private_key_1 = private_key_1.as_slice();
+        let signature_1 = Signature::new(private_key_1.try_into()?, &hash);
+
+        let private_key_2 = k256::SecretKey::random(&mut OsRng);
+        let private_key_2 = private_key_2.to_be_bytes();
+        let private_key_2 = private_key_2.as_slice();
+        let signature_2 = Signature::new(private_key_2.try_into()?, &hash);
+
+        assert_ne!(signature_1, signature_2);
+
+        Ok(())
+    }
 }
