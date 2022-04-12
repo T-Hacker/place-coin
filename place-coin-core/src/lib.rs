@@ -28,6 +28,9 @@ mod tests {
         // Mine a block.
         blockchain.mine()?;
 
+        // Validate block mined.
+        assert!(blockchain.get_last_block().is_valid(&blockchain));
+
         Ok(blockchain)
     }
 
@@ -50,6 +53,9 @@ mod tests {
 
         // Mine to commit the new block.
         blockchain.mine()?;
+
+        // Validate block mined.
+        assert!(blockchain.get_last_block().is_valid(&blockchain));
 
         // Check if credits were transferred.
         let credits = blockchain.get_peer_credits(&recipient_address);
@@ -99,6 +105,24 @@ mod tests {
 
     //     Ok(())
     // }
+
+    #[test]
+    fn test_signature_by_changing_one_byte() -> Result<()> {
+        let mut hash: Hash = [0xFF; 32];
+
+        let private_key = k256::SecretKey::random(&mut OsRng);
+        let private_key = private_key.to_be_bytes();
+        let private_key = private_key.as_slice();
+        let signature_1 = Signature::new(private_key.try_into()?, &hash);
+
+        hash[16] = 0;
+
+        let signature_2 = Signature::new(private_key.try_into()?, &hash);
+
+        assert_ne!(signature_1, signature_2);
+
+        Ok(())
+    }
 
     #[test]
     fn test_signature_with_different_private_keys() -> Result<()> {

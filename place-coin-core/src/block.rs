@@ -1,5 +1,5 @@
 use crate::{
-    blockchain::{Hash, Proof},
+    blockchain::{Blockchain, Hash, Proof},
     transaction::{Transaction, TransactionInput},
 };
 use anyhow::{bail, Context, Result};
@@ -68,5 +68,29 @@ impl Block {
         let hash: Hash = digest.as_slice().try_into().unwrap();
 
         hash
+    }
+
+    pub fn is_valid(&self, blockchain: &Blockchain) -> bool {
+        // Check if the proof is valid.
+        if let Some(previous_hash) = &self.previous_hash {
+            let previous_block = {
+                if let Some(previous_block) = blockchain.get_block(previous_hash) {
+                    previous_block
+                } else {
+                    return false;
+                }
+            };
+
+            let last_proof = previous_block.get_proof();
+            if !Blockchain::validate_proof(last_proof, &self.proof) {
+                return false;
+            }
+        } else if self.proof != 100 {
+            return false;
+        }
+
+        // TODO: Check if transactions are valid.
+
+        true
     }
 }

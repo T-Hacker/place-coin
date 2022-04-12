@@ -114,6 +114,10 @@ impl Blockchain {
             .sum()
     }
 
+    pub fn get_block(&self, hash: &Hash) -> Option<&Block> {
+        self.blocks.get(hash)
+    }
+
     pub fn get_last_block(&self) -> &Block {
         self.blocks.get(&self.last_block_hash).unwrap()
     }
@@ -241,17 +245,8 @@ impl Blockchain {
         Ok(())
     }
 
-    fn proof_of_work(&self) -> Proof {
-        let last_block = self.get_last_block();
-        let last_proof = last_block.get_proof();
-
-        (0..Proof::MAX)
-            .into_par_iter()
-            .find_any(|possible_proof| Self::validate_proof(last_proof, possible_proof))
-            .unwrap()
-    }
-
-    fn validate_proof(last_proof: &Proof, proof: &Proof) -> bool {
+    // TODO: Add difficulty parameter.
+    pub fn validate_proof(last_proof: &Proof, proof: &Proof) -> bool {
         let mut hasher = Sha3_256::default();
         hasher.update(&last_proof.to_le_bytes());
         hasher.update(&proof.to_le_bytes());
@@ -260,6 +255,16 @@ impl Blockchain {
         let hash: Hash = digest.as_slice().try_into().unwrap();
 
         hash.iter().take(1).all(|e| *e == 0)
+    }
+
+    fn proof_of_work(&self) -> Proof {
+        let last_block = self.get_last_block();
+        let last_proof = last_block.get_proof();
+
+        (0..Proof::MAX)
+            .into_par_iter()
+            .find_any(|possible_proof| Self::validate_proof(last_proof, possible_proof))
+            .unwrap()
     }
 
     fn is_output_spent(&self, transaction_hash: &Hash, output_index: u32) -> bool {
